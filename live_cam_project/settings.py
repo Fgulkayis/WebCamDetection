@@ -37,7 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'channels'
+    'channels',
     'camera_app',
 ]
 
@@ -126,6 +126,6 @@ ASGI_APPLICATION = 'live_cam_project.asgi.application'
 
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer', # Geliştirme için basit bir in-memory katman
+        'BACKEND': 'channels.layers.InMemoryChannelLayer', 
     },
 }

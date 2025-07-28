@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canlı Kamera Algılama</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 50px; }
+        #video-container {
+            position: relative;
+            width: 640px; 
+            height: 480px;
+            border: 2px solid #333;
+            background-color: #000;
+            overflow: hidden; 
+        }
+        #video {
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); 
+            object-fit: fill; 
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; 
+        }
+        .bounding-box {
+            position: absolute;
+            border: 2px solid red;
+            box-sizing: border-box; 
+            color: red;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        }
+        button { padding: 10px 20px; margin-top: 20px; font-size: 16px; cursor: pointer; }
+        #status { margin-top: 20px; font-weight: bold; color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Canlı Kamera İnsan Algılama</h1>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <button id="startButton">Kamerayı Başlat</button>
+    <p id="status">Kamera bekleniyor...</p>
+
+    <script>
+        const video = document.getElementById('video');
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+        const overlayCanvas = document.getElementById('overlay');
+        const overlayCtx = overlayCanvas.getContext('2d');
+
+        let ws = null; 
+        let videoStream = null; 
+        let isProcessing = false; 
+        const processingInterval = 100; 
+        let intervalId = null; 
+
+        startButton.addEventListener('click', startCamera);
+
+        async function startCamera() {
+           
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                videoStream = null;
+            }
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); 
+            statusDiv.textContent = 'Kamera başlatılıyor...';
+
+
+            try {
+              
+                videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = videoStream;
+
+                statusDiv.textContent = 'Kamera başlatıldı. Bağlantı kuruluyor...';
+
+               
+                video.onloadedmetadata = () => {
+                    video.play();
+                   
+                    overlayCanvas.height = video.videoHeight;
+
+                    connectWebSocket();
+
+      
+                    intervalId = setInterval(sendFrameForProcessing, processingInterval);
+                };
+
+            } catch (err) {
+                console.error('Kamera erişim hatası:', err);
+                statusDiv.textContent = 'Kamera başlatılamadı: ' + err.name + ' - ' + err.message;
+            }
+        }
+
+        function connectWebSocket() {
+
+            ws = new WebSocket('ws://' + window.location.host + '/ws/camera/');
+
+            ws.onopen = () => {
+                statusDiv.textContent = 'WebSocket bağlantısı kuruldu. Görüntüler işleniyor...';
+                console.log('WebSocket bağlantısı kuruldu.');
+                ws.send(JSON.stringify({ 'message': 'Kamera akışı başlatıldı.' }));
+            };
+
+            ws.onmessage = (event) => {
+             
+                const data = JSON.parse(event.data);
+           
+
+                if (data.boxes) {
+                    drawBoundingBoxes(data.boxes);
+                } else if (data.message) {
+                    console.log('Sunucu mesajı:', data.message);
+                }
+
+                isProcessing = false; 
+            };
+
+            ws.onclose = (event) => {
+                statusDiv.textContent = 'WebSocket bağlantısı kesildi. Yeniden bağlanılıyor...';
+                console.log('WebSocket bağlantısı kapandı:', event.code, event.reason);
+
+                if (videoStream) { 
+                   setTimeout(connectWebSocket, 3000);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket hatası:', err);
+                statusDiv.textContent = 'WebSocket hatası: ' + err.message;
+
+                ws.close();
+            };
+        }
+
+        function sendFrameForProcessing() {
+
+            if (!ws || ws.readyState !== WebSocket.OPEN || video.readyState < video.HAVE_ENOUGH_DATA || isProcessing) {
+                return;
+            }
+
+            isProcessing = true; 
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.videoWidth;
+            tempCanvas.height = video.videoHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+
+
+            tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+
+
+            const imageData = tempCanvas.toDataURL('image/jpeg', 0.6); 
+
+         
+            ws.send(JSON.stringify({ 'frame': imageData }));
+        }
+
+        function drawBoundingBoxes(boxes) {
+         
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            overlayCtx.strokeStyle = 'red';
+            overlayCtx.lineWidth = 2;
+            overlayCtx.fillStyle = 'red'; 
+            overlayCtx.font = '16px Arial';
+
+            boxes.forEach(box => {
+                const [x, y, w, h] = box;
+                overlayCtx.strokeRect(x, y, w, h);
+                overlayCtx.fillText('İnsan', x + 5, y + 20); 
+            });
+        }
+
+    </script>
+</body>
+</html>
